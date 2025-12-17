@@ -1271,23 +1271,32 @@ class Aircraft(Destroyable_Machine):
                               "DEACTIVATE_POST_COMBUSTION": self.deactivate_post_combustion
                               })
         
-        # JSBSim 飞行动力学引擎（可选）
+        # JSBSim 飞行动力学引擎（优先启用，失败时自动降级）
         # 如果没有显式指定，从全局配置读取
         if use_jsbsim is None:
             from master import Main
-            use_jsbsim = Main.flag_use_jsbsim if hasattr(Main, 'flag_use_jsbsim') else False
+            use_jsbsim = Main.flag_use_jsbsim if hasattr(Main, 'flag_use_jsbsim') else True  # 默认启用
             jsbsim_aircraft = Main.jsbsim_aircraft_type if hasattr(Main, 'jsbsim_aircraft_type') else "f16"
         
         self.use_jsbsim = use_jsbsim
         self.jsbsim_adapter = None
+        
         if use_jsbsim:
-            from JSBSimAdapter import JSBSimAdapter
-            self.jsbsim_adapter = JSBSimAdapter(jsbsim_aircraft, use_jsbsim=True)
-            if self.jsbsim_adapter.enabled:
-                print(f"{name}: 使用 JSBSim 飞行动力学引擎 ({jsbsim_aircraft})")
-            else:
-                print(f"{name}: JSBSim 初始化失败，使用简化物理模型")
+            try:
+                from JSBSimAdapter import JSBSimAdapter
+                self.jsbsim_adapter = JSBSimAdapter(jsbsim_aircraft, use_jsbsim=True)
+                
+                if self.jsbsim_adapter.enabled:
+                    print(f"✈️  {name}: 已启用 JSBSim 真实飞行动力学 (型号: {jsbsim_aircraft})")
+                else:
+                    print(f"⚠️  {name}: JSBSim 初始化失败，使用简化物理模型")
+                    self.use_jsbsim = False
+                    
+            except Exception as e:
+                print(f"⚠️  {name}: JSBSim 加载失败: {e}")
+                print(f"    → 自动降级到简化物理模型")
                 self.use_jsbsim = False
+                self.jsbsim_adapter = None
 
         self.add_device(AircraftUserControlDevice("UserControlDevice", self, "scripts/aircraft_user_inputs_mapping.json"))
         self.add_device(AircraftAutopilotControlDevice("AutopilotControlDevice", self, "scripts/aircraft_autopilot_inputs_mapping.json"))
@@ -1320,7 +1329,7 @@ class Aircraft(Destroyable_Machine):
         self.start_gear_state = True #
 
         self.start_thrust_level = 0
-        self.start_linear_speed = 0
+        self.start_linear_speed = 200  # 初始速度 200 m/s (≈ 720 km/h) - 适合战斗机巡航
 
         # Setup slots
         self.engines_slots = self.get_engines_slots()
@@ -1942,10 +1951,24 @@ class Aircraft(Destroyable_Machine):
 
     def update_kinetics(self, dts):
 
-        # JSBSim 物理引擎
+        # JSBSim 物理引擎（强制优先使用）
         if self.use_jsbsim and self.jsbsim_adapter and self.jsbsim_adapter.enabled:
+            # 调试：第一次更新时显示使用 JSBSim
+            if not hasattr(self, '_jsbsim_debug_shown'):
+                print(f"🚀 [{self.name}] 正在使用 JSBSim 进行物理解算")
+                self._jsbsim_debug_shown = True
             self.update_kinetics_jsbsim(dts)
             return
+        
+        # 如果配置要求使用 JSBSim 但未启用，发出警告
+        if self.use_jsbsim and (not self.jsbsim_adapter or not self.jsbsim_adapter.enabled):
+            if not hasattr(self, '_jsbsim_warning_shown'):
+                print(f"⚠️ 警告: {self.name} 配置为使用 JSBSim 但未启用，回退到简化物理模型")
+                self._jsbsim_warning_shown = True
+            # 显示回退到简化物理
+            if not hasattr(self, '_simplified_physics_shown'):
+                print(f"   [{self.name}] 使用简化物理模型")
+                self._simplified_physics_shown = True
 
         # Custom physics (but keep inner collisions system)
         if self.flag_custom_physics_mode:
@@ -2076,6 +2099,13 @@ class Aircraft(Destroyable_Machine):
         # 准备 JSBSim 控制输入
         controls = self.jsbsim_adapter.harfang_to_jsbsim_controls(self)
         
+        # 调试：显示油门输入（仅前10帧）
+        if not hasattr(self, '_debug_frame_count'):
+            self._debug_frame_count = 0
+        if self._debug_frame_count < 10:
+            print(f"[{self.name}] 帧{self._debug_frame_count}: 油门={controls['throttle']:.2f}, 速度={self.get_linear_speed()*3.6:.1f} km/h")
+            self._debug_frame_count += 1
+        
         # 获取当前位置和姿态（首次同步）
         current_matrix = self.parent_node.GetTransform().GetWorld()
         current_pos = hg.GetT(current_matrix)
@@ -2103,6 +2133,20 @@ class Aircraft(Destroyable_Machine):
             mat, velocity = self.jsbsim_adapter.jsbsim_to_harfang_matrix(state, current_pos)
             
             if mat is not None and velocity is not None:
+                # 更新位置（使用速度积分）
+                new_pos = current_pos + velocity * dts
+                new_pos.y = state['altitude']  # 高度使用 JSBSim 的精确值
+                
+                # 姿态
+                rot = hg.Vec3(
+                    radians(state['pitch']),
+                    radians(state['yaw']),
+                    radians(state['roll'])
+                )
+                
+                # 构建新矩阵
+                mat = hg.TransformationMat4(new_pos, rot)
+                
                 # 更新碰撞检测
                 mat = self.update_collisions(mat, dts)
                 
@@ -2114,6 +2158,11 @@ class Aircraft(Destroyable_Machine):
                 
                 # 更新内部状态
                 self.v_move = velocity
+                
+                # 调试：显示位置和速度（前5帧）
+                if self._debug_frame_count <= 5:
+                    delta_pos = pos - current_pos
+                    print(f"  位置变化: Δ=({delta_pos.x:.2f}, {delta_pos.y:.2f}, {delta_pos.z:.2f}), v_move=({velocity.x:.1f}, {velocity.y:.1f}, {velocity.z:.1f})")
                 self.pitch_attitude = state['pitch']
                 self.roll_attitude = state['roll']
                 self.heading = state['yaw']

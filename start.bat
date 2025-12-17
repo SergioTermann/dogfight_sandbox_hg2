@@ -1,3 +1,5 @@
+@echo off
+call conda activate bh
 cd source
-..\bin\python\python.exe main.py
+python main.py
 pause

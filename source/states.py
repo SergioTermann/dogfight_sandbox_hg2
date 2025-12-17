@@ -20,8 +20,11 @@ def init_menu_phase():
     Missions.setup_carriers(Main.aircraft_carrier_allies, hg.Vec3(0, 0, 0), hg.Vec3(100, 0, 25), 0)
     Main.create_players(["Rafale", "Eurofighter", "Rafale", "Eurofighter", "Rafale", "F16"], [])
     n = len(Main.players_allies)
-    Missions.aircrafts_starts_on_carrier(Main.players_allies[0:n // 2], Main.aircraft_carrier_allies[0], hg.Vec3(10, 19.5, 60), 0, hg.Vec3(0, 0, -20))
-    Missions.aircrafts_starts_on_carrier(Main.players_allies[n // 2:n], Main.aircraft_carrier_allies[0], hg.Vec3(-10, 19.5, 40), 0, hg.Vec3(0, 0, -20))
+    # 让飞机在空中开始，带初始速度（适合测试 JSBSim）
+    Missions.aircrafts_starts_in_sky(Main.players_allies, hg.Vec3(0, 1000, 0), hg.Vec3(500, 200, 1000), hg.Vec2(-180, 180), hg.Vec2(600 / 3.6, 800 / 3.6))
+    # 原来的航母起飞（需要从0加速）：
+    # Missions.aircrafts_starts_on_carrier(Main.players_allies[0:n // 2], Main.aircraft_carrier_allies[0], hg.Vec3(10, 19.5, 60), 0, hg.Vec3(0, 0, -20))
+    # Missions.aircrafts_starts_on_carrier(Main.players_allies[n // 2:n], Main.aircraft_carrier_allies[0], hg.Vec3(-10, 19.5, 40), 0, hg.Vec3(0, 0, -20))
     nd = Main.scene.GetNode("aircraft_carrier")
 
     if Main.intro_anim_id == 1:

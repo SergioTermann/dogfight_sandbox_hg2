@@ -140,8 +140,8 @@ class JSBSimAdapter:
             self.fdm.set_property_value('ic/long-gc-deg', 0.0)   # 经度
             self.fdm.set_property_value('ic/h-sl-ft', 10000.0)   # 海拔（英尺）
             
-            # 初始速度和姿态
-            self.fdm.set_property_value('ic/u-fps', 300.0)  # X轴速度（英尺/秒）
+            # 初始速度和姿态（提高初始速度以避免失速）
+            self.fdm.set_property_value('ic/u-fps', 650.0)  # X轴速度（英尺/秒）≈ 198 m/s ≈ 713 km/h
             self.fdm.set_property_value('ic/v-fps', 0.0)    # Y轴速度
             self.fdm.set_property_value('ic/w-fps', 0.0)    # Z轴速度
             
@@ -204,22 +204,66 @@ class JSBSimAdapter:
             
             # 输入控制信号到 JSBSim（安全模式）
             # JSBSim 使用规范化的控制输入 (-1 到 1 或 0 到 1)
+            throttle_value = controls.get('throttle', 0.0)
+            elevator_value = controls.get('elevator', 0.0)
+            aileron_value = controls.get('aileron', 0.0)
+            rudder_value = controls.get('rudder', 0.0)
+            flaps_value = controls.get('flaps', 0.0)
+            
             try:
-                self.fdm.set_property_value('fcs/throttle-cmd-norm', controls.get('throttle', 0.0))
-                self.fdm.set_property_value('fcs/elevator-cmd-norm', controls.get('elevator', 0.0))
-                self.fdm.set_property_value('fcs/aileron-cmd-norm', controls.get('aileron', 0.0))
-                self.fdm.set_property_value('fcs/rudder-cmd-norm', controls.get('rudder', 0.0))
-                self.fdm.set_property_value('fcs/flap-cmd-norm', controls.get('flaps', 0.0))
+                self.fdm.set_property_value('fcs/throttle-cmd-norm', throttle_value)
+                self.fdm.set_property_value('fcs/elevator-cmd-norm', elevator_value)
+                self.fdm.set_property_value('fcs/aileron-cmd-norm', aileron_value)
+                self.fdm.set_property_value('fcs/rudder-cmd-norm', rudder_value)
+                self.fdm.set_property_value('fcs/flap-cmd-norm', flaps_value)
                 self.fdm.set_property_value('fcs/brake-cmd-norm', controls.get('brake', 0.0))
             except Exception as e:
                 # 某些控制可能不存在，继续运行
                 pass
             
-            # 运行一帧物理模拟
+            # 调试：显示输入到 JSBSim 的所有舵面控制（前5帧）
+            if not hasattr(self, '_jsbsim_debug_count'):
+                self._jsbsim_debug_count = 0
+            if self._jsbsim_debug_count < 5:
+                print(f"  → JSBSim 舵面输入:")
+                print(f"     油门={throttle_value:.2f}, 升降舵={elevator_value:.3f}, 副翼={aileron_value:.3f}, 方向舵={rudder_value:.3f}")
+                self._jsbsim_debug_count += 1
+            
+            # 运行一帧物理模拟 ← 这里！JSBSim 真实物理计算
             self.fdm.run()
             
             # 从 JSBSim 读取状态
             state = self._get_state()
+            
+            # 调试：显示完整的闭环系统（前5帧）
+            if hasattr(self, '_jsbsim_debug_count') and self._jsbsim_debug_count <= 5:
+                if state:
+                    # 速度和加速度
+                    u = state.get('u', 0)  # 前向速度
+                    v = state.get('v', 0)  # 侧向速度
+                    w = state.get('w', 0)  # 垂直速度
+                    speed_kmh = u * 3.6
+                    
+                    # 姿态角
+                    roll = state.get('roll', 0)
+                    pitch = state.get('pitch', 0)
+                    yaw = state.get('yaw', 0)
+                    
+                    # 角速度（姿态变化率）
+                    p = state.get('p', 0)  # Roll rate
+                    q = state.get('q', 0)  # Pitch rate
+                    r = state.get('r', 0)  # Yaw rate
+                    
+                    # 气动参数
+                    alpha = state.get('alpha', 0)  # 迎角
+                    beta = state.get('beta', 0)    # 侧滑角
+                    
+                    print(f"  ← JSBSim 闭环输出:")
+                    print(f"     速度: u={u:.1f} m/s ({speed_kmh:.1f} km/h), v={v:.1f}, w={w:.1f}")
+                    print(f"     姿态: Roll={roll:.2f}°, Pitch={pitch:.2f}°, Yaw={yaw:.2f}°")
+                    print(f"     气流角: 迎角α={alpha:.2f}°, 侧滑角β={beta:.2f}°  ← 由姿态决定！")
+                    print(f"     角速度: p={p:.3f}, q={q:.3f}, r={r:.3f} rad/s  ← 由气动力矩产生！")
+            
             return state
             
         except Exception as e:
@@ -402,7 +446,7 @@ class JSBSimAdapter:
         
         controls = {
             'throttle': aircraft.thrust_level,
-            'elevator': aircraft.angular_levels.x,   # Pitch
+            'elevator': -aircraft.angular_levels.x,   # Pitch (反转符号以匹配 JSBSim)
             'aileron': aircraft.angular_levels.z,    # Roll
             'rudder': aircraft.angular_levels.y,     # Yaw
             'flaps': aircraft.flaps_level if hasattr(aircraft, 'flaps_level') else 0.0,
@@ -425,7 +469,10 @@ class JSBSimAdapter:
         if state is None:
             return None, None
         
-        # 位置（保持 X, Z，更新 Y 高度）
+        # 位置：使用 JSBSim 的速度积分来更新位置
+        # JSBSim 的惯性系速度：vx (北), vy (上), vz (东)
+        # Harfang 坐标系：X (东), Y (上), Z (北)
+        # 注意：我们需要保持当前位置，因为 JSBSim 使用局部坐标
         pos = hg.Vec3(current_pos.x, state['altitude'], current_pos.z)
         
         # 姿态（欧拉角 -> 旋转矩阵）
@@ -440,9 +487,15 @@ class JSBSimAdapter:
         # 构建变换矩阵
         matrix = hg.TransformationMat4(pos, rot)
         
-        # 速度（惯性系）
-        # 这里简化：使用机体坐标系速度
-        velocity = hg.Vec3(state['v'], state['w'], state['u'])
+        # 速度（机体坐标系转换到世界坐标系）
+        # JSBSim 机体坐标系：u (前), v (右), w (下)
+        # Harfang 世界坐标系：需要根据飞机姿态转换
+        # 简化：使用机体坐标系速度，通过旋转矩阵转换
+        body_velocity = hg.Vec3(state['v'], -state['w'], state['u'])  # 右, 上, 前
+        
+        # 通过旋转矩阵将机体速度转换为世界速度
+        rot_mat = hg.Mat3(matrix)
+        velocity = rot_mat * body_velocity
         
         return matrix, velocity
 

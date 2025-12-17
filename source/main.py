@@ -51,6 +51,9 @@ if json_script != "":
     Main.resolution.y = script_parameters["Resolution"][1]
     Main.antialiasing = script_parameters["AntiAliasing"]
     Main.flag_shadowmap = script_parameters["ShadowMap"]
+    # JSBSim 配置
+    Main.flag_use_jsbsim = script_parameters.get("UseJSBSim", False)
+    Main.jsbsim_aircraft_type = script_parameters.get("JSBSimAircraft", "f16")
 
 # If the VR is enabled the main window becomes useless
 # so we downsize it.

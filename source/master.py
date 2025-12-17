@@ -86,8 +86,8 @@ class Main:
     perf_total_time = 0.0
     
     # JSBSim 飞行动力学引擎
-    flag_use_jsbsim = False  # 使用 JSBSim 真实飞行动力学
-    jsbsim_aircraft_type = "c172p"  # JSBSim 飞机型号 (c172p最稳定, f16, 737等)
+    flag_use_jsbsim = True  # 使用 JSBSim 真实飞行动力学（默认启用）
+    jsbsim_aircraft_type = "f16"  # JSBSim 飞机型号 (c172p最稳定, f16战斗机, 737等)
 
     flag_network_mode = False
     flag_client_update_mode = False
