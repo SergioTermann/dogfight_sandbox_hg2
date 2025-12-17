@@ -72,6 +72,22 @@ class Main:
 
     timestamp = 0  # Frame count.
     timestep = 1 / 60  # Frame dt
+    
+    # 仿真加速控制
+    simulation_speed = 1.0  # 仿真速度倍数（1.0 = 正常，2.0 = 2倍速，0.5 = 半速）
+    max_simulation_speed = 10.0  # 最大加速倍数
+    min_simulation_speed = 0.1  # 最小减速倍数
+    
+    # 性能监控
+    flag_show_performance = False  # 显示性能统计
+    perf_physics_time = 0.0
+    perf_render_time = 0.0
+    perf_hud_time = 0.0
+    perf_total_time = 0.0
+    
+    # JSBSim 飞行动力学引擎
+    flag_use_jsbsim = False  # 使用 JSBSim 真实飞行动力学
+    jsbsim_aircraft_type = "c172p"  # JSBSim 飞机型号 (c172p最稳定, f16, 737等)
 
     flag_network_mode = False
     flag_client_update_mode = False
@@ -1182,11 +1198,40 @@ class Main:
                 cls.save_json_script()
 
             hg.ImGuiText("Num nodes: %d" % cls.scene.GetNodeCount())
+            
+            # 仿真速度控制
+            hg.ImGuiSeparator()
+            hg.ImGuiText("Simulation Speed Control")
+            d, v = hg.ImGuiSliderFloat("Speed Multiplier", cls.simulation_speed, cls.min_simulation_speed, cls.max_simulation_speed)
+            if d:
+                cls.simulation_speed = v
+                print(f"Simulation speed: {cls.simulation_speed:.1f}x")
+            hg.ImGuiSameLine()
+            if hg.ImGuiButton("Reset (1x)"):
+                cls.simulation_speed = 1.0
+            
+            # 预设速度按钮
+            if hg.ImGuiButton("0.5x"):
+                cls.simulation_speed = 0.5
+            hg.ImGuiSameLine()
+            if hg.ImGuiButton("2x"):
+                cls.simulation_speed = 2.0
+            hg.ImGuiSameLine()
+            if hg.ImGuiButton("5x"):
+                cls.simulation_speed = 5.0
+            hg.ImGuiSameLine()
+            if hg.ImGuiButton("10x"):
+                cls.simulation_speed = 10.0
+            
+            hg.ImGuiText("Current: %.1fx | Keys: PageUp/PageDown to adjust, Home to reset" % cls.simulation_speed)
+            hg.ImGuiSeparator()
 
             d, f = hg.ImGuiCheckbox("Display FPS", cls.flag_display_fps)
             if d: cls.flag_display_fps = f
             d, f = hg.ImGuiCheckbox("Display HUD", cls.flag_display_HUD)
             if d: cls.flag_display_HUD = f
+            d, f = hg.ImGuiCheckbox("Show Performance Monitor (P key)", cls.flag_show_performance)
+            if d: cls.flag_show_performance = f
 
             d, f = hg.ImGuiCheckbox("Renderless", cls.flag_renderless)
             if d: cls.set_renderless_mode(f)
@@ -1204,6 +1249,41 @@ class Main:
 
             d, f = hg.ImGuiCheckbox("Display aircraft trajectory", cls.flag_display_aircraft_trajectory)
             if d: cls.flag_display_aircraft_trajectory = f
+
+            # JSBSim 飞行动力学引擎选项
+            hg.ImGuiSeparator()
+            hg.ImGuiText("Flight Dynamics Model")
+            prev_flag = cls.flag_use_jsbsim
+            d, f = hg.ImGuiCheckbox("Use JSBSim (Restart Required)", cls.flag_use_jsbsim)
+            if d and f != prev_flag:
+                cls.flag_use_jsbsim = f
+                if f:
+                    print("JSBSim 将在下次创建飞机时启用")
+                    print("注意：需要先安装 JSBSim: pip install jsbsim")
+                else:
+                    print("JSBSim 已禁用，使用简化物理模型")
+            
+            # JSBSim 飞机型号选择
+            if cls.flag_use_jsbsim:
+                hg.ImGuiText("Aircraft Model (run 'python diagnose_jsbsim.py' to see available):")
+                if hg.ImGuiButton("C172P (Recommended)"):
+                    cls.jsbsim_aircraft_type = "c172p"
+                    print("JSBSim: 使用 Cessna 172P 模型（推荐）")
+                hg.ImGuiSameLine()
+                if hg.ImGuiButton("F-16"):
+                    cls.jsbsim_aircraft_type = "f16"
+                    print("JSBSim: 使用 F-16 模型")
+                hg.ImGuiSameLine()
+                if hg.ImGuiButton("C172"):
+                    cls.jsbsim_aircraft_type = "c172"
+                    print("JSBSim: 使用 Cessna 172 模型")
+                hg.ImGuiSameLine()
+                if hg.ImGuiButton("737"):
+                    cls.jsbsim_aircraft_type = "737"
+                    print("JSBSim: 使用 Boeing 737 模型")
+                hg.ImGuiText(f"Current: {cls.jsbsim_aircraft_type}")
+                hg.ImGuiText("Tip: Run 'python diagnose_jsbsim.py' to check your installation")
+            hg.ImGuiSeparator()
 
             d, f = hg.ImGuiCheckbox("Display machines bounds", cls.flag_display_machines_bounding_boxes)
             if d: cls.flag_display_machines_bounding_boxes = f
@@ -1626,6 +1706,30 @@ class Main:
 
             if cls.keyboard.Pressed(hg.K_F10):
                 cls.flag_display_HUD = not cls.flag_display_HUD
+            
+            # 仿真速度控制快捷键
+            # 使用 PageUp 键加速
+            if cls.keyboard.Pressed(hg.K_PageUp):
+                # 增加仿真速度
+                cls.simulation_speed = min(cls.simulation_speed * 1.5, cls.max_simulation_speed)
+                print(f"Simulation speed: {cls.simulation_speed:.1f}x")
+            
+            # 使用 PageDown 键减速
+            if cls.keyboard.Pressed(hg.K_PageDown):
+                # 减少仿真速度
+                cls.simulation_speed = max(cls.simulation_speed / 1.5, cls.min_simulation_speed)
+                print(f"Simulation speed: {cls.simulation_speed:.1f}x")
+            
+            # 使用 Home 键重置
+            if cls.keyboard.Pressed(hg.K_Home):
+                # 重置为正常速度
+                cls.simulation_speed = 1.0
+                print("Simulation speed: 1.0x (Normal)")
+            
+            # 性能监控开关 (P键)
+            if cls.keyboard.Pressed(hg.K_P):
+                cls.flag_show_performance = not cls.flag_show_performance
+                print(f"Performance monitor: {'ON' if cls.flag_show_performance else 'OFF'}")
 
             if cls.flag_gui:
                 hg.ImGuiBeginFrame(int(cls.resolution.x), int(cls.resolution.y), real_dt, hg.ReadMouse(), hg.ReadKeyboard())
@@ -1641,10 +1745,25 @@ class Main:
                 # Overlays.add_text2D("FPS %d" % (cls.num_fps), hg.Vec2(0.001, 0.999), 0.018, hg.Color.Yellow, cls.hud_font)
 
             # =========== State update:
-            used_dt = min(forced_dt * 2, real_dt)
-            cls.current_state = cls.current_state(hg.time_to_sec_f(used_dt)) # Minimum frame rate security
+            # 性能监控：记录开始时间
+            import time
+            perf_start = time.perf_counter() if cls.flag_show_performance else 0
+            
+            # 先计算基础时间步长
+            base_dt = min(forced_dt * 2, real_dt)
+            # 转换为秒并应用仿真速度倍数
+            dt_seconds = hg.time_to_sec_f(base_dt) * cls.simulation_speed
+            # 转换回时间类型用于物理引擎
+            used_dt = hg.time_from_sec_f(dt_seconds)
+            
+            cls.current_state = cls.current_state(dt_seconds) # Minimum frame rate security
             hg.SceneUpdateSystems(cls.scene, cls.clocks, used_dt, cls.scene_physics, used_dt, 1000)  # ,10,1000)
             #在这里进行整个物理模型的更新，如果注释掉飞机是停住的，但是不影响选关
+            
+            # 性能监控：记录物理/逻辑更新时间
+            if cls.flag_show_performance:
+                cls.perf_physics_time = (time.perf_counter() - perf_start) * 1000  # 转换为毫秒
+                perf_render_start = time.perf_counter()
 
             # =========== Render scene visuals:
             if not cls.flag_renderless:
@@ -1660,10 +1779,20 @@ class Main:
                 if cls.flag_vr:
                     hg.OpenVRSubmitFrame(cls.vr_left_fb, cls.vr_right_fb)
                 #hg.UpdateWindow(cls.win)
+                
+                # 性能监控：记录渲染时间
+                if cls.flag_show_performance:
+                    cls.perf_render_time = (time.perf_counter() - perf_render_start) * 1000
+                    cls.perf_total_time = cls.perf_physics_time + cls.perf_render_time
 
             # =========== Renderless mode:
             else:
                 cls.update_renderless(real_dt)
+                
+                # 性能监控：无渲染模式
+                if cls.flag_show_performance:
+                    cls.perf_render_time = 0
+                    cls.perf_total_time = cls.perf_physics_time
 
             cls.clear_display_lists()
 

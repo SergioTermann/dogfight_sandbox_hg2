@@ -1258,7 +1258,7 @@ class Aircraft(Destroyable_Machine):
     IA_COM_RETURN_TO_BASE = 3
     IA_COM_LANDING = 4
 
-    def __init__(self, name, model_name, scene, scene_physics, pipeline_ressource: hg.PipelineResources, instance_scene_name, nationality, start_position, start_rotation):
+    def __init__(self, name, model_name, scene, scene_physics, pipeline_ressource: hg.PipelineResources, instance_scene_name, nationality, start_position, start_rotation, use_jsbsim=None, jsbsim_aircraft=None):
 
         Destroyable_Machine.__init__(self, name, model_name, scene, scene_physics, pipeline_ressource, instance_scene_name, Destroyable_Machine.TYPE_AIRCRAFT, nationality, start_position, start_rotation)
         self.commands.update({"SET_THRUST_LEVEL": self.set_thrust_level,
@@ -1270,6 +1270,24 @@ class Aircraft(Destroyable_Machine):
                               "ACTIVATE_POST_COMBUSTION": self.activate_post_combustion,
                               "DEACTIVATE_POST_COMBUSTION": self.deactivate_post_combustion
                               })
+        
+        # JSBSim 飞行动力学引擎（可选）
+        # 如果没有显式指定，从全局配置读取
+        if use_jsbsim is None:
+            from master import Main
+            use_jsbsim = Main.flag_use_jsbsim if hasattr(Main, 'flag_use_jsbsim') else False
+            jsbsim_aircraft = Main.jsbsim_aircraft_type if hasattr(Main, 'jsbsim_aircraft_type') else "f16"
+        
+        self.use_jsbsim = use_jsbsim
+        self.jsbsim_adapter = None
+        if use_jsbsim:
+            from JSBSimAdapter import JSBSimAdapter
+            self.jsbsim_adapter = JSBSimAdapter(jsbsim_aircraft, use_jsbsim=True)
+            if self.jsbsim_adapter.enabled:
+                print(f"{name}: 使用 JSBSim 飞行动力学引擎 ({jsbsim_aircraft})")
+            else:
+                print(f"{name}: JSBSim 初始化失败，使用简化物理模型")
+                self.use_jsbsim = False
 
         self.add_device(AircraftUserControlDevice("UserControlDevice", self, "scripts/aircraft_user_inputs_mapping.json"))
         self.add_device(AircraftAutopilotControlDevice("AutopilotControlDevice", self, "scripts/aircraft_autopilot_inputs_mapping.json"))
@@ -1289,6 +1307,12 @@ class Aircraft(Destroyable_Machine):
         self.trajectory_history_max_length = 600  # 最多保存600个点（增加3倍）
         self.trajectory_record_interval = 0  # 记录间隔计数器
         self.trajectory_record_frequency = 1  # 每1帧记录一次（更密集）
+        
+        # 高度历史记录（用于绘制曲线图）
+        self.altitude_history = []  # 存储历史高度
+        self.altitude_history_max_length = 300  # 最多保存300个点
+        self.altitude_record_interval = 0  # 记录间隔计数器
+        self.altitude_record_frequency = 2  # 每2帧记录一次
 
 
         self.start_landed = True
@@ -1918,6 +1942,11 @@ class Aircraft(Destroyable_Machine):
 
     def update_kinetics(self, dts):
 
+        # JSBSim 物理引擎
+        if self.use_jsbsim and self.jsbsim_adapter and self.jsbsim_adapter.enabled:
+            self.update_kinetics_jsbsim(dts)
+            return
+
         # Custom physics (but keep inner collisions system)
         if self.flag_custom_physics_mode:
             Destroyable_Machine.update_kinetics(self, dts)
@@ -2005,6 +2034,17 @@ class Aircraft(Destroyable_Machine):
                         # 限制历史记录长度
                         if len(self.trajectory_history) > self.trajectory_history_max_length:
                             self.trajectory_history.pop(0)  # 移除最旧的点
+                    
+                    # ======== 记录高度历史（用于曲线图）==============================================
+                    self.altitude_record_interval += 1
+                    if self.altitude_record_interval >= self.altitude_record_frequency:
+                        self.altitude_record_interval = 0
+                        # 添加当前高度到历史记录
+                        current_altitude = pos.y
+                        self.altitude_history.append(current_altitude)
+                        # 限制历史记录长度
+                        if len(self.altitude_history) > self.altitude_history_max_length:
+                            self.altitude_history.pop(0)  # 移除最旧的点
 
                     # ======== Update Acceleration ==========================================================
 
@@ -2015,6 +2055,91 @@ class Aircraft(Destroyable_Machine):
                 # ====================== Update Feed backs:
 
                 self.update_feedbacks(dts)
+
+    def update_kinetics_jsbsim(self, dts):
+        """
+        使用 JSBSim 引擎更新飞机运动学
+        """
+        if not self.activated:
+            return
+        
+        # 更新设备（控制输入等）
+        self.update_devices(dts)
+        
+        # 更新飞机内部状态（油门、襟翼等）
+        self.update_thrust_level(dts)
+        self.update_brake_level(dts)
+        self.update_flaps_level(dts)
+        self.update_angular_levels(dts)
+        self.update_mobile_parts(dts)
+        
+        # 准备 JSBSim 控制输入
+        controls = self.jsbsim_adapter.harfang_to_jsbsim_controls(self)
+        
+        # 获取当前位置和姿态（首次同步）
+        current_matrix = self.parent_node.GetTransform().GetWorld()
+        current_pos = hg.GetT(current_matrix)
+        
+        # 如果是第一次更新，初始化 JSBSim 状态
+        if not hasattr(self, '_jsbsim_initialized'):
+            # 提取当前姿态
+            _, _, rot, _, _, _ = self.decompose_matrix(current_matrix)
+            # 转换为欧拉角（简化版）
+            self.jsbsim_adapter.set_position(current_pos)
+            self.jsbsim_adapter.set_velocity(self.v_move)
+            self.jsbsim_adapter.set_orientation(
+                degrees(rot.z),  # Roll
+                degrees(rot.x),  # Pitch
+                degrees(rot.y)   # Yaw
+            )
+            self._jsbsim_initialized = True
+            print(f"{self.name}: JSBSim 状态已同步")
+        
+        # 更新 JSBSim 物理模拟
+        state = self.jsbsim_adapter.update(dts, controls)
+        
+        if state is not None:
+            # 将 JSBSim 状态转换为 Harfang 矩阵和速度
+            mat, velocity = self.jsbsim_adapter.jsbsim_to_harfang_matrix(state, current_pos)
+            
+            if mat is not None and velocity is not None:
+                # 更新碰撞检测
+                mat = self.update_collisions(mat, dts)
+                
+                # 更新姿态和速度
+                mat, pos, rot, aX, aY, aZ = self.decompose_matrix(mat)
+                
+                self.parent_node.GetTransform().SetPos(pos)
+                self.parent_node.GetTransform().SetRot(rot)
+                
+                # 更新内部状态
+                self.v_move = velocity
+                self.pitch_attitude = state['pitch']
+                self.roll_attitude = state['roll']
+                self.heading = state['yaw']
+                
+                # 记录历史轨迹
+                self.trajectory_record_interval += 1
+                if self.trajectory_record_interval >= self.trajectory_record_frequency:
+                    self.trajectory_record_interval = 0
+                    self.trajectory_history.append(hg.Vec3(pos))
+                    if len(self.trajectory_history) > self.trajectory_history_max_length:
+                        self.trajectory_history.pop(0)
+                
+                # 记录高度历史
+                self.altitude_record_interval += 1
+                if self.altitude_record_interval >= self.altitude_record_frequency:
+                    self.altitude_record_interval = 0
+                    self.altitude_history.append(pos.y)
+                    if len(self.altitude_history) > self.altitude_history_max_length:
+                        self.altitude_history.pop(0)
+                
+                # 更新加速度
+                self.rec_linear_speed()
+                self.update_linear_acceleration()
+        
+        # 更新反馈效果
+        self.update_feedbacks(dts)
 
     def gui(self):
         if hg.ImGuiBegin("Aircraft"):
