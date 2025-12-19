@@ -1370,8 +1370,8 @@ class Aircraft(Destroyable_Machine):
         self.bottom_height = 0.96
         self.gear_height = 2
         self.parts_angles = hg.Vec3(radians(15), radians(45), radians(45))
-        self.thrust_force = 10
-        self.post_combustion_force = self.thrust_force / 2
+        self.thrust_force = 15  # 增加基础推力（从 10 提升到 15）
+        self.post_combustion_force = self.thrust_force * 0.8  # 增加后燃器推力（从 0.5 倍提升到 0.8 倍）
         self.drag_coeff = hg.Vec3(0.033, 0.06666, 0.0002)
         self.wings_lift = 0.0005
         self.brake_drag = 0.006
@@ -1391,7 +1391,7 @@ class Aircraft(Destroyable_Machine):
 
         self.flag_easy_steering = True
         self.flag_easy_steering_mem = True  # Used in IA on/off switching
-        self.thrust_level_inertia = 1
+        self.thrust_level_inertia = 3  # 增加油门响应速度（从 1 提升到 3）
         self.thrust_level_dest = 0
         self.thrust_disfunction_noise = ms.Temporal_Perlin_Noise(0.1)
         self.brake_level_dest = 0
