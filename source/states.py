@@ -398,11 +398,11 @@ def update_main_phase(dts):
         print("Aircraft trajectory display:", "ON" if Main.flag_display_aircraft_trajectory else "OFF")
 
     # ===== 🔧 仿真加速控制快捷键 =====
-    if Main.keyboard.Pressed(hg.K_Equals) or Main.keyboard.Pressed(hg.K_Add):  # + 键加速
+    if Main.keyboard.Pressed(hg.K_Plus) or Main.keyboard.Pressed(hg.K_Add):  # + 键加速
         Main.simulation_speed = min(Main.max_simulation_speed, Main.simulation_speed * 2.0)
         print(f"⚡ 仿真加速: {Main.simulation_speed:.1f}x")
     
-    if Main.keyboard.Pressed(hg.K_Minus) or Main.keyboard.Pressed(hg.K_Subtract):  # - 键减速
+    if Main.keyboard.Pressed(hg.K_Minus) or Main.keyboard.Pressed(hg.K_Sub):  # - 键减速
         Main.simulation_speed = max(Main.min_simulation_speed, Main.simulation_speed / 2.0)
         print(f"🐌 仿真减速: {Main.simulation_speed:.1f}x")
     
