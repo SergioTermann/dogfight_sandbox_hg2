@@ -296,6 +296,11 @@ def update_main_phase(dts):
             if Main.post_process.fade_running:
                 Main.master_sfx_volume = Main.post_process.fade_f
 
+        # 🔧 显示仿真加速指示器（正常渲染模式下）
+        if Main.simulation_speed != 1.0:
+            speed_color = hg.Color(0.0, 1.0, 0.0) if Main.simulation_speed < 1.0 else hg.Color(1.0, 1.0, 0.0)
+            Overlays.add_text2D(f"⚡ Sim Speed: {Main.simulation_speed:.1f}x", hg.Vec2(0.98, 0.02), 0.015, speed_color, Main.hud_font, "right")
+
         if Main.flag_control_views:
             Main.control_views(Main.keyboard) #进入这里以后开始判断各个按键是否按下，来切换视角
 
@@ -391,6 +396,19 @@ def update_main_phase(dts):
     if Main.keyboard.Pressed(hg.K_T):
         Main.flag_display_aircraft_trajectory = not Main.flag_display_aircraft_trajectory
         print("Aircraft trajectory display:", "ON" if Main.flag_display_aircraft_trajectory else "OFF")
+
+    # ===== 🔧 仿真加速控制快捷键 =====
+    if Main.keyboard.Pressed(hg.K_Equals) or Main.keyboard.Pressed(hg.K_Add):  # + 键加速
+        Main.simulation_speed = min(Main.max_simulation_speed, Main.simulation_speed * 2.0)
+        print(f"⚡ 仿真加速: {Main.simulation_speed:.1f}x")
+    
+    if Main.keyboard.Pressed(hg.K_Minus) or Main.keyboard.Pressed(hg.K_Subtract):  # - 键减速
+        Main.simulation_speed = max(Main.min_simulation_speed, Main.simulation_speed / 2.0)
+        print(f"🐌 仿真减速: {Main.simulation_speed:.1f}x")
+    
+    if Main.keyboard.Pressed(hg.K_0):  # 0 键恢复正常
+        Main.simulation_speed = 1.0
+        print(f"⏱️ 仿真速度: 正常 1.0x")
 
     if Main.keyboard.Pressed(hg.K_R):
         Main.set_renderless_mode(not Main.flag_renderless)

@@ -162,7 +162,9 @@ while not Main.flag_exit:
             # # print("start to main.update ____________________________________________________________________")
             Main.update()
         else:
-           time.sleep(1 / 120)
+           # 🔧 优化：网络客户端模式下也支持加速
+           # 根据加速倍率调整等待时间
+           time.sleep((1 / 120) / Main.simulation_speed)
             
         Main.update_window()
         # print('line163 launch update window')

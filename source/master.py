@@ -1629,25 +1629,34 @@ class Main:
 
     @classmethod
     def update_renderless(cls, dt):
+        """
+        无渲染模式更新 - 支持仿真加速
+        在无渲染模式下，可以跳过图形绘制，实现更快的仿真速度
+        """
         vid = 0
         res_x = int(cls.resolution.x)
         res_y = int(cls.resolution.y)
         cls.frame_time += dt
-        if hg.time_to_sec_f(cls.frame_time) >= 1 / 60:
+        
+        # 🔧 改进：显示刷新率固定为 30 fps（足够显示状态信息）
+        # 不再受仿真加速影响，避免过度渲染浪费性能
+        display_interval = 1 / 30  # 30 fps 固定刷新率
+        
+        if hg.time_to_sec_f(cls.frame_time) >= display_interval:
             hg.SetViewRect(0, 0, 0, res_x, res_y)
             hg.SetViewClear(0, hg.CF_Color | hg.CF_Depth, 0x0, 1.0, 0)
             Sprite.setup_matrix_sprites2D(vid, cls.resolution)
             for spr in cls.sprites_display_list:
                 spr.draw(vid)
-            #cls.texts_display_list.append({"text": "RENDERLESS MODE", "font": cls.hud_font, "pos": hg.Vec2(0.5, 0.5), "size": 0.018, "color": hg.Color.Red})
-            Overlays.add_text2D("RENDERLESS MODE", hg.Vec2(0.5, 0.5), 0.018, hg.Color.Red, cls.hud_font)
-            """
-            for txt in cls.texts_display_list:
-                if "h_align" in txt:
-                    cls.display_text(vid, txt["text"], txt["pos"], txt["size"], txt["font"], txt["color"], txt["h_align"])
-                else:
-                    cls.display_text(vid, txt["text"], txt["pos"], txt["size"], txt["font"], txt["color"])
-            """
+            
+            # 🔧 显示仿真速度和加速提示
+            if cls.simulation_speed != 1.0:
+                Overlays.add_text2D(f"RENDERLESS MODE - {cls.simulation_speed:.1f}x SPEED", hg.Vec2(0.5, 0.5), 0.018, hg.Color.Red, cls.hud_font)
+                Overlays.add_text2D(f"[+/-] Adjust Speed  [0] Reset  [R] Render", hg.Vec2(0.5, 0.48), 0.012, hg.Color(1.0, 0.8, 0.0), cls.hud_font)
+            else:
+                Overlays.add_text2D("RENDERLESS MODE", hg.Vec2(0.5, 0.5), 0.018, hg.Color.Red, cls.hud_font)
+                Overlays.add_text2D(f"[+/-] Speed Control  [R] Render", hg.Vec2(0.5, 0.48), 0.012, hg.Color(1.0, 0.8, 0.0), cls.hud_font)
+            
             Overlays.display_texts2D(vid, cls.scene.GetCurrentCamera(), cls.resolution)
 
             if cls.flag_gui:
