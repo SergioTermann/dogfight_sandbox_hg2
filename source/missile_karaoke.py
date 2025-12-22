@@ -16,7 +16,7 @@ class Karaoke(Missile):
     def __init__(self, name, scene, scene_physics, pipeline_ressource: hg.PipelineResources, nationality):
         Missile.__init__(self, name, Karaoke.model_name, nationality, scene, scene_physics, pipeline_ressource, Karaoke.instance_scene_name)
 
-        self.f_thrust = 70
+        self.f_thrust = 105  # 从 70 增加到 105 (+50%)
         self.smoke_parts_distance = 1.44374
         self.angular_frictions = hg.Vec3(0.00005, 0.00005, 0.00005)  # pitch, yaw, roll
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)

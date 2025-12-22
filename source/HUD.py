@@ -408,7 +408,17 @@ class HUD_Aircraft:
 
 		# 只显示关键信息
 		Overlays.add_text2D("Health: %d%%" % (aircraft.health_level * 100), hg.Vec2(0.05, 0.96), 0.018, (hg.Color.White * aircraft.health_level + hg.Color.Red * (1 - aircraft.health_level)) * f, Main.hud_font)
-		Overlays.add_text2D("Speed: %d km/h" % (aircraft.get_linear_speed() * 3.6), hg.Vec2(0.05, 0.94), 0.018, hg.Color.White * f, Main.hud_font)
+		
+		# 速度显示（带安全检查）
+		import math
+		linear_speed = aircraft.get_linear_speed()
+		if math.isfinite(linear_speed):
+			speed_kmh = int(linear_speed * 3.6)
+		else:
+			speed_kmh = 0  # 如果速度异常，显示 0
+			print(f"警告：飞机速度异常 = {linear_speed}")
+		
+		Overlays.add_text2D("Speed: %d km/h" % speed_kmh, hg.Vec2(0.05, 0.94), 0.018, hg.Color.White * f, Main.hud_font)
 		
 		# 显示仿真速度（如果不是1.0x）
 		if Main.simulation_speed != 1.0:

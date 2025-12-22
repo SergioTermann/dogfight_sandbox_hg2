@@ -16,7 +16,7 @@ class Mica(Missile):
     def __init__(self, name, scene, scene_physics, pipeline_ressource: hg.PipelineResources, nationality):
         Missile.__init__(self, name, Mica.model_name, nationality, scene, scene_physics, pipeline_ressource, Mica.instance_scene_name)
 
-        self.f_thrust = 160 #150
+        self.f_thrust = 240  # 从 160 增加到 240 (+50%)
         self.smoke_parts_distance = 1.44374
         self.angular_frictions = hg.Vec3(0.00014, 0.00014, 0.00014)  # pitch, yaw, roll
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)

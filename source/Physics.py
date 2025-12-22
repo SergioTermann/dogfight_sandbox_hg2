@@ -6,13 +6,16 @@ from MathsSupp import *
 import tools as tools
 from overlays import *
 
-air_density0 = 1.225 #  sea level standard atmospheric pressure, 101325 Pa
+# ================================================================================
+# 物理常量
+# ================================================================================
+
+air_density0 = 1.225  # sea level standard atmospheric pressure, 101325 Pa
 F_gravity = hg.Vec3(0, -9.8, 0)
 
 scene = None
 scene_physics = None
 water_level = 0
-
 
 terrain_heightmap = None
 terrain_position = hg.Vec3(-24896, -296.87, 9443)
@@ -20,7 +23,12 @@ terrain_scale = hg.Vec3(41480, 1000, 19587)
 map_bounds = hg.Vec2(0, 255)
 
 
+# ================================================================================
+# 地形和环境工具函数
+# ================================================================================
+
 def init_physics(scn, scn_physics, terrain_heightmap_file, p_terrain_pos, p_terrain_scale, p_map_bounds):
+	"""初始化物理系统（地形碰撞等）"""
 	global scene, scene_physics, terrain_heightmap, terrain_position, terrain_scale, map_bounds
 	scene = scn
 	scene_physics = scn_physics
@@ -32,12 +40,14 @@ def init_physics(scn, scn_physics, terrain_heightmap_file, p_terrain_pos, p_terr
 
 
 def get_terrain_altitude(pos: hg.Vec3):
+	"""获取地形高度和法线"""
 	global terrain_position, terrain_scale, terrain_heightmap, map_bounds
 	pos2 = hg.Vec2((pos.x - terrain_position.x) / terrain_scale.x, 1 - (pos.z - terrain_position.z) / terrain_scale.z)
 	return get_map_altitude(pos2), get_terrain_normale(pos2)
 
 
 def get_map_altitude(pos2d):
+	"""获取地图高度"""
 	global terrain_position, terrain_scale, terrain_heightmap, map_bounds
 	a = (tools.get_pixel_bilinear(terrain_heightmap, pos2d).r * 255 - map_bounds.x) / (map_bounds.y - map_bounds.x)
 	a = max(water_level, a * terrain_scale.y + terrain_position.y)
@@ -45,6 +55,7 @@ def get_map_altitude(pos2d):
 
 
 def get_terrain_normale(pos2d):
+	"""获取地形法线"""
 	w = terrain_heightmap.GetWidth()
 	h = terrain_heightmap.GetHeight()
 	f = 1 / max(w, h)
@@ -62,22 +73,21 @@ def _compute_atmosphere_temp(altitude):
 	:param altitude: altitude in meters.
 	:return: temperature in Kelvin.
 	"""
-
-	#Gradients are Kelvin/km.
+	# Gradients are Kelvin/km.
 	if altitude < 11e3:
-		temperature_gradient = -6.5 #Kelvin per km.
-		reference_temp = 288.15 #Temperature at sea level.
+		temperature_gradient = -6.5  # Kelvin per km.
+		reference_temp = 288.15  # Temperature at sea level.
 		altitude_diff = altitude - 0
 	else:
 		temperature_gradient = 0
-		reference_temp = 216.65 #Temperature at 11km altitude.
+		reference_temp = 216.65  # Temperature at 11km altitude.
 		altitude_diff = altitude - 11e3
 
-	return reference_temp + temperature_gradient*(altitude_diff / 1000)
-
+	return reference_temp + temperature_gradient * (altitude_diff / 1000)
 
 
 def compute_atmosphere_density(altitude):
+	"""计算大气密度（使用气压公式）"""
 	# Barometric formula
 	# temperature_K : based on ICAO Standard Atmosphere
 	temperature_K = _compute_atmosphere_temp(altitude)
@@ -89,6 +99,7 @@ def compute_atmosphere_density(altitude):
 
 
 def update_collisions(matrix: hg.Mat4, collisions_object, collisions_raycasts):
+	"""更新碰撞检测"""
 	rays_hits = []
 
 	for collision_ray in collisions_raycasts:
@@ -109,14 +120,30 @@ def update_collisions(matrix: hg.Mat4, collisions_object, collisions_raycasts):
 	return rays_hits, terrain_alt, terrain_nrm
 
 
-def update_physics(matrix, collisions_object, physics_parameters, dts):
+# ================================================================================
+# 简化物理模型（仅用于导弹等非飞机对象）
+# ================================================================================
+# 
+# 注意：飞机应该使用 JSBSim 进行真实的飞行动力学模拟。
+# 
+# JSBSim 配置：
+# - 在 config.json 中设置 "UseJSBSim": true
+# - 安装 JSBSim: pip install jsbsim
+# - 参考 JSBSimAdapter.py 了解实现细节
+# 
+# ================================================================================
 
+def update_physics(matrix, collisions_object, physics_parameters, dts):
+	"""
+	简化物理模型（用于导弹等非飞机对象）
+	
+	注意：飞机应该使用 JSBSim，不应该调用此函数。
+	"""
 	aX = hg.GetX(matrix)
 	aY = hg.GetY(matrix)
 	aZ = hg.GetZ(matrix)
 
 	# Cap, Pitch & Roll attitude:
-
 	if aY.y > 0:
 		y_dir = 1
 	else:
@@ -124,15 +151,17 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 
 	horizontal_aZ = hg.Normalize(hg.Vec3(aZ.x, 0, aZ.z))
 	horizontal_aX = hg.Cross(hg.Vec3.Up, horizontal_aZ) * y_dir
-	horizontal_aY = hg.Cross(aZ, horizontal_aX)  # ! It's not an orthogonal repere !
+	horizontal_aY = hg.Cross(aZ, horizontal_aX)
 
 	pitch_attitude = degrees(acos(max(-1, min(1, hg.Dot(horizontal_aZ, aZ)))))
-	if aZ.y < 0: pitch_attitude *= -1
+	if aZ.y < 0: 
+		pitch_attitude *= -1
 
 	roll_attitude = degrees(acos(max(-1, min(1, hg.Dot(horizontal_aX, aX)))))
-	if aX.y < 0: roll_attitude *= -1
+	if aX.y < 0: 
+		roll_attitude *= -1
 
-	heading = heading = degrees(acos(max(-1, min(1, hg.Dot(horizontal_aZ, hg.Vec3.Front)))))
+	heading = degrees(acos(max(-1, min(1, hg.Dot(horizontal_aZ, hg.Vec3.Front)))))
 	if horizontal_aZ.x < 0:
 		heading = 360 - heading
 
@@ -145,8 +174,6 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 
 	# Thrust force:
 	k = pow(physics_parameters["thrust_level"], 2) * physics_parameters["thrust_force"]
-	# if self.post_combustion and self.thrust_level == 1:
-	#    k += self.post_combustion_force
 	F_thrust = aZ * k
 
 	pos = hg.GetT(matrix)
@@ -163,11 +190,9 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 	F_drag = hg.Normalize(spdX) * q.x * physics_parameters["drag_coefficients"].x + hg.Normalize(spdY) * q.y * physics_parameters["drag_coefficients"].y + hg.Normalize(spdZ) * q.z * physics_parameters["drag_coefficients"].z
 
 	# Total
-
 	physics_parameters["v_move"] += ((F_thrust + F_lift - F_drag) * physics_parameters["health_wreck_factor"] + F_gravity) * dts
 
 	# Displacement:
-
 	pos += physics_parameters["v_move"] * dts
 
 	# Rotations:
@@ -188,7 +213,6 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 
 	# Easy steering:
 	if physics_parameters["flag_easy_steering"]:
-
 		easy_yaw_angle = (1 - (hg.Dot(aX, horizontal_aX)))
 		if hg.Dot(aZ, hg.Cross(aX, horizontal_aX)) < 0:
 			easy_turn_m_yaw = horizontal_aY * -easy_yaw_angle
@@ -213,10 +237,7 @@ def update_physics(matrix, collisions_object, physics_parameters, dts):
 	moment_speed = hg.Len(torque) * physics_parameters["health_wreck_factor"]
 
 	# Return matrix:
-
 	rot_mat = MathsSupp.rotate_matrix(matrix, axis_rot, moment_speed * dts)
 	mat = hg.TransformationMat4(pos, rot_mat)
-
-
 
 	return mat, {"v_move": physics_parameters["v_move"], "pitch_attitude": pitch_attitude, "heading": heading, "roll_attitude": roll_attitude}

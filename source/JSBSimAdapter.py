@@ -281,20 +281,54 @@ class JSBSimAdapter:
             altitude_m = self.fdm.get_property_value('position/h-sl-meters')  # 海拔（米）
             
             # 欧拉角（度）
-            roll_deg = self.fdm.get_property_value('attitude/roll-rad') * 180.0 / 3.14159
-            pitch_deg = self.fdm.get_property_value('attitude/pitch-rad') * 180.0 / 3.14159
+            # 坐标系说明：
+            # - JSBSim: 右手坐标系，pitch 向上为正，roll 右侧向下为正
+            # - Harfang: pitch 和 roll 符号相反
+            # 
+            # 🔧 修复：反转 pitch 和 roll 符号用于显示
+            # Pitch:
+            # - JSBSim pitch > 0 (抬头) → Harfang pitch < 0 (显示为抬头)
+            # - JSBSim pitch < 0 (低头) → Harfang pitch > 0 (显示为低头)
+            # Roll:
+            # - JSBSim roll > 0 (右滚) → Harfang roll < 0 (显示为右滚)
+            # - JSBSim roll < 0 (左滚) → Harfang roll > 0 (显示为左滚)
+            roll_deg = -self.fdm.get_property_value('attitude/roll-rad') * 180.0 / 3.14159  # 🔧 反转符号！
+            pitch_deg = -self.fdm.get_property_value('attitude/pitch-rad') * 180.0 / 3.14159  # 🔧 反转符号！
             yaw_deg = self.fdm.get_property_value('attitude/heading-true-rad') * 180.0 / 3.14159
             
-            # 速度（转换为米/秒）
-            # JSBSim body frame velocities
+            # 机体坐标系速度
             u_mps = self.fdm.get_property_value('velocities/u-fps') * 0.3048  # X轴速度
             v_mps = self.fdm.get_property_value('velocities/v-fps') * 0.3048  # Y轴速度
             w_mps = self.fdm.get_property_value('velocities/w-fps') * 0.3048  # Z轴速度
+            
+            # 安全检查：防止无穷大或 NaN
+            import math
+            if not math.isfinite(u_mps):
+                print(f"警告：u 异常 = {u_mps}，重置为 0")
+                u_mps = 0.0
+            if not math.isfinite(v_mps):
+                print(f"警告：v 异常 = {v_mps}，重置为 0")
+                v_mps = 0.0
+            if not math.isfinite(w_mps):
+                print(f"警告：w 异常 = {w_mps}，重置为 0")
+                w_mps = 0.0
             
             # 线速度（惯性系）
             vx = self.fdm.get_property_value('velocities/v-north-fps') * 0.3048
             vy = self.fdm.get_property_value('velocities/v-down-fps') * 0.3048 * -1  # JSBSim down是负的
             vz = self.fdm.get_property_value('velocities/v-east-fps') * 0.3048
+            
+            # 安全检查：防止无穷大或 NaN
+            import math
+            if not math.isfinite(vx):
+                print(f"警告：vx 异常 = {vx}，重置为 0")
+                vx = 0.0
+            if not math.isfinite(vy):
+                print(f"警告：vy 异常 = {vy}，重置为 0")
+                vy = 0.0
+            if not math.isfinite(vz):
+                print(f"警告：vz 异常 = {vz}，重置为 0")
+                vz = 0.0
             
             # 角速度（弧度/秒）
             p = self.fdm.get_property_value('velocities/p-rad_sec')  # Roll rate
@@ -443,12 +477,21 @@ class JSBSimAdapter:
         # 映射控制输入
         # Harfang 的 angular_levels: x=pitch, y=yaw, z=roll
         # JSBSim: elevator=pitch, rudder=yaw, aileron=roll
+        # 
+        # 🔧 符号修正：
+        # - JSBSim elevator: 正值=抬头, 负值=低头
+        # - Harfang angular_levels.x: 正值=抬头命令, 负值=低头命令
+        # - 因此直接映射，不需要反转符号！
+        # 
+        # 之前的 bug：使用了负号 (-aircraft.angular_levels.x)
+        # → 导致低头命令变成抬头，抬头命令变成低头
+        # → 飞机低头时，elevator变正值，JSBSim抬头，高度上升 ✗
         
         controls = {
             'throttle': aircraft.thrust_level,
-            'elevator': -aircraft.angular_levels.x,   # Pitch (反转符号以匹配 JSBSim)
-            'aileron': aircraft.angular_levels.z,    # Roll
-            'rudder': aircraft.angular_levels.y,     # Yaw
+            'elevator': aircraft.angular_levels.x,    # 🔧 修复：去掉负号！
+            'aileron': aircraft.angular_levels.z,     # Roll
+            'rudder': aircraft.angular_levels.y,      # Yaw
             'flaps': aircraft.flaps_level if hasattr(aircraft, 'flaps_level') else 0.0,
             'brake': aircraft.brake_level if hasattr(aircraft, 'brake_level') else 0.0
         }
@@ -457,7 +500,7 @@ class JSBSimAdapter:
     
     def jsbsim_to_harfang_matrix(self, state, current_pos):
         """
-        将 JSBSim 状态转换为 Harfang 矩阵
+        将 JSBSim 状态转换为 Harfang 矩阵和速度
         
         Args:
             state: JSBSim 状态字典
@@ -465,21 +508,37 @@ class JSBSimAdapter:
         
         Returns:
             tuple: (matrix, velocity_hg)
+        
+        📌 重要说明：坐标系差异与位置更新
+        
+        JSBSim 使用地理坐标系：
+        - 位置：经度(deg)、纬度(deg)、高度(m)
+        - JSBSim 内部积分这些地理坐标
+        
+        Harfang 使用笛卡尔坐标系：
+        - 位置：X(m)、Y(m)、Z(m)
+        
+        因此策略是：
+        1. 从 JSBSim 读取惯性系速度（北/上/东）
+        2. 转换为 Harfang 坐标系速度（东/上/北）
+        3. 外部调用者用这个速度积分笛卡尔位置
+        4. 高度直接使用 JSBSim 的精确值
         """
         if state is None:
             return None, None
         
-        # 位置：使用 JSBSim 的速度积分来更新位置
-        # JSBSim 的惯性系速度：vx (北), vy (上), vz (东)
-        # Harfang 坐标系：X (东), Y (上), Z (北)
-        # 注意：我们需要保持当前位置，因为 JSBSim 使用局部坐标
+        # 位置：只更新高度，水平位置保持不变（由外部用速度积分）
+        # 这不是"双重积分"，因为 JSBSim 积分的是经纬度，我们积分的是 XYZ 米
         pos = hg.Vec3(current_pos.x, state['altitude'], current_pos.z)
         
         # 姿态（欧拉角 -> 旋转矩阵）
         # JSBSim: Roll, Pitch, Yaw
-        # Harfang: 需要转换顺序
+        # Harfang: X=pitch, Y=yaw, Z=roll
+        # 
+        # 注意：state['pitch'] 已经在 _get_state() 中反转过符号了
+        # 所以这里直接使用即可
         rot = hg.Vec3(
-            radians(state['pitch']),
+            radians(state['pitch']),  # 已反转符号
             radians(state['yaw']),
             radians(state['roll'])
         )
@@ -487,15 +546,10 @@ class JSBSimAdapter:
         # 构建变换矩阵
         matrix = hg.TransformationMat4(pos, rot)
         
-        # 速度（机体坐标系转换到世界坐标系）
-        # JSBSim 机体坐标系：u (前), v (右), w (下)
-        # Harfang 世界坐标系：需要根据飞机姿态转换
-        # 简化：使用机体坐标系速度，通过旋转矩阵转换
-        body_velocity = hg.Vec3(state['v'], -state['w'], state['u'])  # 右, 上, 前
-        
-        # 通过旋转矩阵将机体速度转换为世界速度
-        rot_mat = hg.Mat3(matrix)
-        velocity = rot_mat * body_velocity
+        # 速度（直接使用 JSBSim 的惯性系速度）
+        # JSBSim 惯性系：vx (北), vy (上), vz (东)
+        # Harfang 坐标系：X (东), Y (上), Z (北)
+        velocity = hg.Vec3(state['vz'], state['vy'], state['vx'])
         
         return matrix, velocity
 

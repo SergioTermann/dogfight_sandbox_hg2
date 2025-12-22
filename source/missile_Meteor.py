@@ -16,7 +16,7 @@ class Meteor(Missile):
     def __init__(self, name, scene, scene_physics, pipeline_ressource: hg.PipelineResources, nationality):
         Missile.__init__(self, name, Meteor.model_name, nationality, scene, scene_physics, pipeline_ressource, Meteor.instance_scene_name)
 
-        self.f_thrust = 80
+        self.f_thrust = 120  # 从 80 增加到 120 (+50%)
         self.smoke_parts_distance = 1.44374
         self.angular_frictions = hg.Vec3(0.00005, 0.00005, 0.00005)  # pitch, yaw, roll
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)

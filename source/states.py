@@ -316,8 +316,8 @@ def update_main_phase(dts):
                     Main.display_landing_trajectory(ia_ctrl.IA_landing_target)
                     Main.display_landing_projection(Main.user_aircraft)
         
-        # 显示飞行器预期轨迹
-        if Main.flag_display_aircraft_trajectory:
+        # 显示飞行器预期轨迹（不在卫星视角下显示）
+        if Main.flag_display_aircraft_trajectory and not Main.satellite_view:
             if Main.user_aircraft is not None:
                 if Main.user_aircraft.type == Destroyable_Machine.TYPE_AIRCRAFT:
                     # 显示历史轨迹（绿色）

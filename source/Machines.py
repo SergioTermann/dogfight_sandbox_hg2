@@ -845,7 +845,7 @@ class Missile(Destroyable_Machine):
         self.target_collision_test_distance_max = 100
 
         # Missile constantes:
-        self.f_thrust = 100
+        self.f_thrust = 150  # 从 100 增加到 150 (+50%)，基础导弹推力
         self.smoke_parts_distance = 1.44374
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)
         self.angular_frictions = hg.Vec3(0.0001, 0.0001, 0.0001)  # pitch, yaw, roll
@@ -2099,11 +2099,16 @@ class Aircraft(Destroyable_Machine):
         # 准备 JSBSim 控制输入
         controls = self.jsbsim_adapter.harfang_to_jsbsim_controls(self)
         
-        # 调试：显示油门输入（仅前10帧）
+        # 调试：显示俯仰控制输入（前30帧）
         if not hasattr(self, '_debug_frame_count'):
             self._debug_frame_count = 0
-        if self._debug_frame_count < 10:
-            print(f"[{self.name}] 帧{self._debug_frame_count}: 油门={controls['throttle']:.2f}, 速度={self.get_linear_speed()*3.6:.1f} km/h")
+        if self._debug_frame_count < 30:
+            pitch_attitude = self.get_pitch_attitude() if hasattr(self, 'get_pitch_attitude') else 0
+            print(f"[{self.name}] 帧{self._debug_frame_count}: "
+                  f"angular_levels.x={self.angular_levels.x:+.3f}, "
+                  f"elevator={controls['elevator']:+.3f}, "
+                  f"pitch={pitch_attitude:+.1f}°, "
+                  f"altitude={self.get_altitude():.1f}m")
             self._debug_frame_count += 1
         
         # 获取当前位置和姿态（首次同步）
@@ -2133,11 +2138,17 @@ class Aircraft(Destroyable_Machine):
             mat, velocity = self.jsbsim_adapter.jsbsim_to_harfang_matrix(state, current_pos)
             
             if mat is not None and velocity is not None:
-                # 更新位置（使用速度积分）
-                new_pos = current_pos + velocity * dts
-                new_pos.y = state['altitude']  # 高度使用 JSBSim 的精确值
+                # ✅ 正确：JSBSim 使用地理坐标系（经纬度），需要用速度积分笛卡尔坐标
+                # JSBSim 内部积分的是经度/纬度/高度，不是直接的 XYZ 米
+                # 所以我们需要用返回的惯性系速度来更新 Harfang 的笛卡尔位置
                 
-                # 姿态
+                # 使用速度积分更新水平位置
+                new_pos = current_pos + velocity * dts
+                
+                # 高度使用 JSBSim 的精确值（避免累积误差）
+                new_pos.y = state['altitude']
+                
+                # 姿态（使用 JSBSim 计算的欧拉角）
                 rot = hg.Vec3(
                     radians(state['pitch']),
                     radians(state['yaw']),

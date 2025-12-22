@@ -2009,6 +2009,15 @@ class AircraftIAControlDevice(ControlDevice):
                                         self.IA_command = AircraftIAControlDevice.IA_COM_LIFTOFF
 
     def update_IA_fight(self, aircraft, dts):
+        """
+        AI 战斗模式 - 优化适配真实气动特性（JSBSim）
+        
+        主要改进：
+        1. 更激进的失速恢复策略
+        2. 能量管理 - 根据高度和速度动态调整推力
+        3. 战术机动 - 接近目标时使用合适的速度和机动
+        4. 更智能的高度管理
+        """
         autopilot = aircraft.devices["AutopilotControlDevice"]
         if autopilot is not None:
             if "Gear" in aircraft.devices and aircraft.devices["Gear"] is not None:
@@ -2018,13 +2027,16 @@ class AircraftIAControlDevice(ControlDevice):
             autopilot.set_autopilot_speed(-1)
             speed = aircraft.get_linear_speed() * 3.6  # convert to km/h
             aircraft.set_brake_level(0)
-            if speed < aircraft.minimum_flight_speed:  #失速保护
+            
+            # ===== 失速保护 - 更激进的恢复策略 =====
+            if speed < aircraft.minimum_flight_speed:  
                 if not self.IA_flag_speed_correction:
                     self.IA_flag_speed_correction = True
-                    aircraft.set_flaps_level(1)
-                    aircraft.set_thrust_level(1)
-                    # aircraft.activate_post_combustion()
-                    autopilot.set_autopilot_altitude(aircraft.get_altitude())
+                    aircraft.set_flaps_level(1)  # 增加升力
+                    aircraft.set_thrust_level(1)  # 最大推力
+                    aircraft.activate_post_combustion()  # 🔧 开加力快速恢复速度
+                    # 稍微低头加速，而不是保持高度
+                    autopilot.set_autopilot_altitude(aircraft.get_altitude() - 200)  # 🔧 轻微俯冲加速
                     autopilot.set_autopilot_heading(aircraft.heading)
             else:
                 self.IA_flag_speed_correction = False
@@ -2032,35 +2044,51 @@ class AircraftIAControlDevice(ControlDevice):
                 alt = aircraft.get_altitude()
                 td = aircraft.get_device("TargettingDevice")
                 if td.target_id > 0:
-                    if self.IA_flag_position_correction:  #出界保护
+                    if self.IA_flag_position_correction:  # 出界保护
                         if aircraft.playfield_distance < aircraft.playfield_safe_distance / 2:
                             self.IA_flag_position_correction = False
 
-                    elif self.IA_flag_altitude_correction:  #低空保护
-                        self.IA_flag_go_to_target = False  #太低空了就先不找目标了
-                        autopilot.set_autopilot_altitude(self.IA_altitude_safe)  #先往高飞
-                        if self.IA_altitude_safe - 100 < alt < self.IA_altitude_safe + 100:  #直到高度在安全高度200米之内再取消保护
+                    elif self.IA_flag_altitude_correction:  # 低空保护
+                        self.IA_flag_go_to_target = False  
+                        autopilot.set_autopilot_altitude(self.IA_altitude_safe)  
+                        # 🔧 低空恢复时使用全推力
+                        aircraft.set_thrust_level(1)
+                        if self.IA_altitude_safe - 100 < alt < self.IA_altitude_safe + 100:  
                             self.IA_flag_altitude_correction = False
 
-                    else:  #之后就是比较正常的时候
+                    else:  # 正常战斗逻辑
                         target_distance = hg.Len(td.targets[td.target_id - 1].get_parent_node().GetTransform().GetPos() - aircraft.parent_node.GetTransform().GetPos())
                         autopilot.set_autopilot_heading(td.target_heading)
+                        
+                        # 🔧 改进：根据距离使用不同策略
                         if target_distance < self.IA_target_distance_fight:
                             self.IA_flag_go_to_target = False
-                            autopilot.set_autopilot_altitude(td.target_altitude)  #如果找到敌机的距离足够近，就和它飞到同一个高度
-                        else:  #如果敌人还比较远
-                            if not self.IA_flag_go_to_target: #如果不是在追踪敌军的路上
+                            # 近距离缠斗：匹配目标高度，但保持能量优势
+                            target_alt = td.target_altitude
+                            # 如果目标在下方，不要完全跟随，保持高度优势
+                            if target_alt < alt - 500:
+                                autopilot.set_autopilot_altitude(target_alt + 300)  # 保持300米优势
+                            else:
+                                autopilot.set_autopilot_altitude(target_alt)
+                        else:  # 远距离追击
+                            if not self.IA_flag_go_to_target: 
                                 self.IA_flag_go_to_target = True
                                 aircraft.set_thrust_level(1)
-                                # aircraft.activate_post_combustion()  #开加力
-                            autopilot.set_autopilot_altitude((td.target_altitude - alt) / 10 + alt)  #爬升到和目标之间十分之一的位置
+                                aircraft.activate_post_combustion()  # 🔧 追击时开加力
+                            # 🔧 改进：爬升更激进，快速占据高度优势
+                            alt_diff = td.target_altitude - alt
+                            if alt_diff > 0:  # 目标在上方
+                                autopilot.set_autopilot_altitude(alt + alt_diff * 0.5)  # 更快爬升
+                            else:  # 目标在下方
+                                autopilot.set_autopilot_altitude(alt + alt_diff * 0.3)  # 慢慢下降，保持能量
+                        
                         if aircraft.playfield_distance > aircraft.playfield_safe_distance:
                             v = aircraft.parent_node.GetTransform().GetPos() * -1
                             self.IA_position_correction_heading = aircraft.calculate_heading(hg.Normalize(v * hg.Vec3(1, 0, 1)))
                             autopilot.set_autopilot_heading(self.IA_position_correction_heading)
                             self.IA_flag_position_correction = True
 
-                        if alt < self.IA_altitude_min or alt > self.IA_altitude_max:  #如果高度不在可行高度之内
+                        if alt < self.IA_altitude_min or alt > self.IA_altitude_max:  
                             self.IA_flag_altitude_correction = True
 
                     # 开始对导弹进行控制
@@ -2109,20 +2137,47 @@ class AircraftIAControlDevice(ControlDevice):
                             mgd.stop_machine_gun()
                     self.IA_flag_landing_target_found = False
                     self.IA_command = AircraftIAControlDevice.IA_COM_LANDING
-                    # self.set_autopilot_altitude(self.IA_cruising_altitude)
-                    # self.set_autopilot_heading(0)
-                # self.stop_machine_gun()
 
-                if not self.IA_flag_go_to_target:  #判断pitch的大小决定使用多大的推力
-                    if aircraft.pitch_attitude > 15:
+                # ===== 🔧 改进：智能推力管理（基于真实气动） =====
+                if not self.IA_flag_go_to_target:  # 非追击状态，缠斗中
+                    # 根据俯仰角和速度动态调整推力
+                    pitch = aircraft.pitch_attitude
+                    
+                    if pitch > 20:  # 大角度爬升
+                        # 需要大推力防止失速
                         aircraft.set_thrust_level(1)
-                        # aircraft.activate_post_combustion()
-                    elif -15 < aircraft.pitch_attitude < 15:
-                        # aircraft.deactivate_post_combustion()
-                        aircraft.set_thrust_level(1)
+                        if pitch > 30:  # 极限爬升，开加力
+                            aircraft.activate_post_combustion()
+                        else:
+                            aircraft.deactivate_post_combustion()
+                    elif pitch > 10:  # 中等爬升
+                        aircraft.set_thrust_level(0.9)
+                        aircraft.deactivate_post_combustion()
+                    elif pitch > -10:  # 平飞
+                        # 根据速度调整
+                        if speed < 600:  # 速度偏低
+                            aircraft.set_thrust_level(0.9)
+                        else:
+                            aircraft.set_thrust_level(0.7)  # 巡航推力
+                        aircraft.deactivate_post_combustion()
+                    elif pitch > -20:  # 小角度俯冲
+                        # 俯冲可以利用重力加速，减小推力
+                        aircraft.set_thrust_level(0.6)
+                        aircraft.deactivate_post_combustion()
+                    else:  # 大角度俯冲
+                        # 防止超速，大幅减推力
+                        if speed > 1200:  # 速度过高
+                            aircraft.set_thrust_level(0.3)
+                        else:
+                            aircraft.set_thrust_level(0.5)
+                        aircraft.deactivate_post_combustion()
+                else:  # 追击状态
+                    # 保持高推力，快速接近目标
+                    aircraft.set_thrust_level(1)
+                    if speed < 800:  # 速度不足时开加力
+                        aircraft.activate_post_combustion()
                     else:
-                        # aircraft.deactivate_post_combustion()
-                        aircraft.set_thrust_level(0.5)
+                        aircraft.deactivate_post_combustion()
 
     def controlled_device_hitted(self):
         aircraft = self.machine

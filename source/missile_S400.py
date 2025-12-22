@@ -16,7 +16,7 @@ class S400(Missile):
     def __init__(self, name, scene, scene_physics, pipeline_ressource: hg.PipelineResources, nationality):
         Missile.__init__(self, name, S400.model_name, nationality, scene, scene_physics, pipeline_ressource, S400.instance_scene_name)
 
-        self.f_thrust = 60
+        self.f_thrust = 90  # 从 60 增加到 90 (+50%)
         self.smoke_parts_distance = 1.44374
         self.angular_frictions = hg.Vec3(0.000025, 0.000025, 0.000025)  # pitch, yaw, roll
         self.drag_coeff = hg.Vec3(0.37, 0.37, 0.0003)
